@@ -23,6 +23,7 @@ DEFAULT_CONFIG_PATH = Path("ucl-profiles.toml")
 # Tags contain commas, so list values in the environment use semicolons.
 ENV_LIST_SEPARATOR = ";"
 FORMATS = ("xlsx", "csv", "json")
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
 # Everyone needs this tag, plus at least one of the area tags.
 DEFAULT_REQUIRED_TAG = "Information and Computing Sciences"
@@ -78,6 +79,7 @@ class Settings:
     emails: bool = True
     timeout: int = DEFAULT_TIMEOUT
     retries: int = DEFAULT_RETRIES
+    log_level: str = "INFO"
     pgta_positions: list[str] = field(default_factory=lambda: list(DEFAULT_PGTA_POSITIONS))
     ps_positions: list[str] = field(default_factory=lambda: list(DEFAULT_PS_POSITIONS))
 
@@ -107,6 +109,10 @@ def _coerce(name: str, value: Any, source: str) -> Any:
                         raise ConfigError(f"{source}: invalid {name} pattern {pattern!r}: {e}") from e
             return value
     elif isinstance(value, str):
+        if name == "log_level":
+            value = value.strip().upper()
+            if value not in LOG_LEVELS:
+                raise ConfigError(f"{source}: log_level must be one of {', '.join(LOG_LEVELS)}, not {value!r}")
         if name == "format" and value not in FORMATS:
             raise ConfigError(f"{source}: format must be one of {', '.join(FORMATS)}, not {value!r}")
         return value
@@ -170,6 +176,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--timeout", type=int, default=s, metavar="SECONDS", help=f"give up on a request after this long (default: {DEFAULT_TIMEOUT})")
     parser.add_argument("--retries", type=int, default=s, metavar="N", help=f"retry a timed-out or failed request up to N times (default: {DEFAULT_RETRIES})")
+    parser.add_argument(
+        "--log-level",
+        type=str.upper,
+        choices=LOG_LEVELS,
+        default=s,
+        help="how much to report on stderr (default: INFO)",
+    )
+    parser.add_argument("-v", "--verbose", dest="log_level", action="store_const", const="DEBUG", default=s, help="same as --log-level DEBUG")
+    parser.add_argument("-q", "--quiet", dest="log_level", action="store_const", const="WARNING", default=s, help="same as --log-level WARNING")
     for flag, column in (("pgta", "PGTA"), ("ps", "Professional services")):
         parser.add_argument(
             f"--{flag}-position",
@@ -183,9 +198,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def load_settings(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> Settings:
+def load_settings_with_sources(
+    argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
+) -> tuple[Settings, list[str]]:
+    """Settings, plus a description of where each non-default one came from.
+
+    The descriptions are for debug logging, which can only be set up once the
+    settings (including log_level) are known.
+    """
     env = os.environ if env is None else env
     args = vars(build_parser().parse_args(argv))
+    sources = []
+
+    def apply(settings: Settings, values: Mapping[str, Any], source: str) -> Settings:
+        if values:
+            sources.append(f"{source}: {', '.join(sorted(values))}")
+        return _apply(settings, values, source)
 
     config_arg = args.pop("config", None) or env.get(ENV_PREFIX + "CONFIG")
     settings = Settings()
@@ -193,12 +221,18 @@ def load_settings(argv: Sequence[str] | None = None, env: Mapping[str, str] | No
         path = Path(config_arg)
         if not path.is_file():
             raise ConfigError(f"config file not found: {path}")
-        settings = _apply(settings, from_toml(path), str(path))
+        settings = apply(settings, from_toml(path), str(path))
     elif DEFAULT_CONFIG_PATH.is_file():
-        settings = _apply(settings, from_toml(DEFAULT_CONFIG_PATH), str(DEFAULT_CONFIG_PATH))
+        settings = apply(settings, from_toml(DEFAULT_CONFIG_PATH), str(DEFAULT_CONFIG_PATH))
+    else:
+        sources.append(f"no config file ({DEFAULT_CONFIG_PATH} not found)")
 
-    settings = _apply(settings, from_env(env), "environment")
-    settings = _apply(settings, args, "command line")
+    settings = apply(settings, from_env(env), "environment")
+    settings = apply(settings, args, "command line")
     if settings.output == "-" and settings.format == "xlsx":
         raise ConfigError("xlsx output can't go to stdout; give --output a file name")
-    return settings
+    return settings, sources
+
+
+def load_settings(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> Settings:
+    return load_settings_with_sources(argv, env)[0]

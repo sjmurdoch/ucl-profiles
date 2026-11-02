@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 from .api import DEFAULT_BASE_URL, profile_url, publication_count, user_tags
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -59,18 +62,23 @@ def check_users(
     results = []
     for user in users:
         tags = user_tags(user)
-        results.append(
-            Result(
-                name=user.get("firstNameLastName") or f"{user.get('firstName', '')} {user.get('lastName', '')}".strip(),
-                url=profile_url(user, base_url),
-                positions=describe_positions(user, department),
-                tags=tags,
-                missing_required_tag=bool(required_tag) and not has_any_tag(tags, [required_tag]),
-                missing_area_tag=not has_any_tag(tags, area_tags),
-                object_id=user.get("objectId"),
-                publications=publication_count(user),
-            )
+        result = Result(
+            name=user.get("firstNameLastName") or f"{user.get('firstName', '')} {user.get('lastName', '')}".strip(),
+            url=profile_url(user, base_url),
+            positions=describe_positions(user, department),
+            tags=tags,
+            missing_required_tag=bool(required_tag) and not has_any_tag(tags, [required_tag]),
+            missing_area_tag=not has_any_tag(tags, area_tags),
+            object_id=user.get("objectId"),
+            publications=publication_count(user),
         )
+        missing = [
+            what
+            for what, flag in (("required tag", result.missing_required_tag), ("area tag", result.missing_area_tag))
+            if flag
+        ]
+        log.debug("%s: missing %s; tags %s", result.name, " and ".join(missing) or "nothing", tags)
+        results.append(result)
     return results
 
 

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+import logging
 import urllib.error
 
 from ucl_profiles import add_profile_details, api, render
@@ -192,7 +193,7 @@ def test_placeholder_email_is_absent(fake):
     assert user_email({"emailAddress": None, "otherEmailAddresses": [{"address": fake}, {"address": "x@ucl.ac.uk"}]}) == "x@ucl.ac.uk"
 
 
-def test_add_profile_details_fetches_profiles_and_tolerates_failures(capsys):
+def test_add_profile_details_fetches_profiles_and_tolerates_failures(caplog):
     urls = []
     appointments = [
         {"position": "Student", "endDate": {"year": 2020}},
@@ -212,7 +213,8 @@ def test_add_profile_details_fetches_profiles_and_tolerates_failures(capsys):
     assert [r.email for r in got] == ["p1@ucl.ac.uk", "", "p3@ucl.ac.uk"]
     # Appointment titles are used only when the department position has none, and only current ones.
     assert [r.positions for r in got] == [["Lecturer"], ["Lecturer"], ["Postgraduate Teaching Assistant"]]
-    assert "could not fetch profile for Person 2" in capsys.readouterr().err
+    assert "could not fetch profile for Person 2" in caplog.text
+    assert "1 of 3 profiles could not be fetched" in caplog.text
     assert add_profile_details(results[:1], "https://x", emails=False, get=get)[0].email == ""
     assert "p1@ucl.ac.uk" in render(got, "csv")
 
@@ -307,8 +309,10 @@ def fake_site(monkeypatch):
     return fetched
 
 
-def test_run_exports_everyone_unfiltered(fake_site, capsys):
+def test_run_exports_everyone_unfiltered(fake_site, capsys, caplog):
     import ucl_profiles
+
+    caplog.set_level(logging.INFO)
 
     assert ucl_profiles.run(Settings(format="csv", output="-")) == 0
     out, err = capsys.readouterr()
@@ -321,7 +325,8 @@ def test_run_exports_everyone_unfiltered(fake_site, capsys):
         "Person 6,p6@ucl.ac.uk,No,No,No,0,No,No,Lecturer,Information and computing sciences; Machine learning,https://profiles.ucl.ac.uk/6-person",
     ]
     assert sorted(fake_site) == [1, 2, 3, 4, 5, 6]
-    assert "wrote 6 people; 5 missing the required tag, 4 missing an area tag" in err
+    assert err == ""  # log records go through logging, not straight to stderr
+    assert "wrote 6 people; 5 missing the required tag, 4 missing an area tag" in caplog.text
 
 
 def test_run_writes_excel_table(fake_site, tmp_path, monkeypatch):
@@ -360,7 +365,7 @@ def test_empty_excel_export(tmp_path):
     assert load_workbook(tmp_path / "e.xlsx")["Staff"].tables["Staff"].ref == "A1:K2"
 
 
-def test_with_retries_backs_off_exponentially_then_succeeds(capsys):
+def test_with_retries_backs_off_exponentially_then_succeeds(caplog):
     calls, sleeps = [], []
 
     def flaky(url):
@@ -374,7 +379,8 @@ def test_with_retries_backs_off_exponentially_then_succeeds(capsys):
     assert len(calls) == 3
     # 1s then 2s, each with up to 50% jitter.
     assert 1.0 <= sleeps[0] <= 1.5 and 2.0 <= sleeps[1] <= 3.0
-    assert "retrying https://x/api/users/1" in capsys.readouterr().err
+    assert "https://x/api/users/1 failed" in caplog.text
+    assert "retry 1 of 3" in caplog.text and "retry 2 of 3" in caplog.text
 
 
 def test_with_retries_gives_up_after_limit():
@@ -413,3 +419,37 @@ def test_timeout_and_retries_settings():
     assert (s.timeout, s.retries) == (5, 1)
     s = load_settings([], env={"UCL_PROFILES_TIMEOUT": "20", "UCL_PROFILES_RETRIES": "0"})
     assert (s.timeout, s.retries) == (20, 0)
+
+
+def test_log_level_setting():
+    assert load_settings([], env={}).log_level == "INFO"
+    assert load_settings(["-v"], env={}).log_level == "DEBUG"
+    assert load_settings(["-q"], env={}).log_level == "WARNING"
+    assert load_settings(["--log-level", "error"], env={}).log_level == "ERROR"
+    assert load_settings([], env={"UCL_PROFILES_LOG_LEVEL": "debug"}).log_level == "DEBUG"
+    with pytest.raises(ConfigError, match="log_level"):
+        load_settings([], env={"UCL_PROFILES_LOG_LEVEL": "loud"})
+
+
+def test_settings_sources_describe_where_values_came_from(tmp_path):
+    from ucl_profiles.config import load_settings_with_sources
+
+    config = tmp_path / "c.toml"
+    config.write_text('department = "X"\n')
+    _, sources = load_settings_with_sources(["--config", str(config), "-v"], env={"UCL_PROFILES_RETRIES": "1"})
+    assert sources == [f"{config}: department", "environment: retries", "command line: log_level"]
+
+
+def test_debug_logging_explains_tag_checks(caplog):
+    caplog.set_level(logging.DEBUG, logger="ucl_profiles.check")
+    check_users([user(1)], DEFAULT_REQUIRED_TAG, DEFAULT_AREA_TAGS, DEPT, "https://x")
+    assert "Person 1: missing required tag and area tag" in caplog.text
+
+
+def test_main_reports_config_errors_via_logging(caplog, monkeypatch):
+    import ucl_profiles
+
+    monkeypatch.delenv("UCL_PROFILES_LOG_LEVEL", raising=False)
+    assert ucl_profiles.main(["--format", "xlsx", "--output", "-"]) == 2
+    assert any(r.levelname == "ERROR" and "stdout" in r.getMessage() for r in caplog.records)
+

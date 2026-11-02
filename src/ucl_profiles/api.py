@@ -9,13 +9,15 @@ requests are needed. The server caps ``perPage`` at 100.
 from __future__ import annotations
 
 import json
+import logging
 import random
-import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://profiles.ucl.ac.uk"
 MAX_PAGE_SIZE = 100
@@ -26,6 +28,22 @@ DEFAULT_RETRIES = 3
 Poster = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
+def _fetch_json(request: urllib.request.Request, timeout: float) -> Any:
+    log.debug("%s %s", request.get_method(), request.full_url)
+    start = time.monotonic()
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        body = response.read()
+        log.debug(
+            "%s %s -> HTTP %s, %d bytes in %.2fs",
+            request.get_method(),
+            request.full_url,
+            response.status,
+            len(body),
+            time.monotonic() - start,
+        )
+    return json.loads(body)
+
+
 def http_post_json(url: str, body: dict[str, Any], timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
@@ -33,14 +51,11 @@ def http_post_json(url: str, body: dict[str, Any], timeout: float = DEFAULT_TIME
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+    return _fetch_json(request, timeout)
 
 
 def http_get_json(url: str, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+    return _fetch_json(urllib.request.Request(url, headers={"Accept": "application/json"}), timeout)
 
 
 def is_transient(error: BaseException) -> bool:
@@ -69,14 +84,20 @@ def with_retries(
     """
 
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        target = args[0] if args else "request"
         for attempt in range(retries + 1):
             try:
                 return request(*args, **kwargs)
             except OSError as e:
-                if attempt == retries or not is_transient(e):
+                if not is_transient(e):
+                    log.debug("%s failed and won't be retried: %s", target, e)
                     raise
-                print(f"note: retrying {args[0] if args else 'request'} after error: {e}", file=sys.stderr)
-                sleep(backoff * 2**attempt * (1 + random.random() / 2))
+                if attempt == retries:
+                    log.debug("%s failed after %d attempt(s), giving up: %s", target, attempt + 1, e)
+                    raise
+                delay = backoff * 2**attempt * (1 + random.random() / 2)
+                log.warning("%s failed (%s); retry %d of %d in %.1fs", target, e, attempt + 1, retries, delay)
+                sleep(delay)
         raise AssertionError("unreachable")
 
     return wrapper
@@ -156,8 +177,9 @@ def iter_department_users(
     while True:
         data = post(url, search_body(department, start, page_size))
         resource = data.get("resource") or []
-        yield from resource
         total = data.get("pagination", {}).get("total", 0)
+        log.debug("page %d: %d people from offset %d of %d", pages + 1, len(resource), start, total)
+        yield from resource
         start += len(resource)
         pages += 1
         if not resource or start >= total or (max_pages > 0 and pages >= max_pages):

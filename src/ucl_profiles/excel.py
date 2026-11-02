@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from datetime import date
 
@@ -11,6 +12,8 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from .check import Result
+
+log = logging.getLogger(__name__)
 
 FONT = "Arial"
 # (header, width) in column order.
@@ -149,4 +152,5 @@ def write_xlsx(
     about.column_dimensions["A"].width = 30
     about.column_dimensions["B"].width = 90
 
+    log.debug("saving %d rows to %s", len(results), path)
     wb.save(path)

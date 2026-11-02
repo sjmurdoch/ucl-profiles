@@ -28,6 +28,8 @@ Looking up emails takes one request per person (about a minute for 565 people). 
 
 The server occasionally accepts a connection and never answers (a few percent of requests). Each request therefore times out after `--timeout` seconds (default 10) and, after a timeout, connection error, 429 or 5xx response, is retried up to `--retries` times (default 3) with exponential back-off (about 1s, 2s, 4s, plus random jitter). People whose profile still can't be fetched are listed with a warning and no email.
 
+Progress, warnings and errors go to stderr through Python's `logging`. Set `log_level` (`--log-level`, `UCL_PROFILES_LOG_LEVEL`) to `DEBUG`, `INFO` (the default), `WARNING` or `ERROR`; `-v` is short for `DEBUG` and `-q` for `WARNING`. Debug output adds timestamps and shows where each setting came from, every HTTP request with its status, size and time, each page of search results, why each person is or isn't missing a tag, and how job titles were classified. It doesn't log email addresses.
+
 ## Settings
 
 Settings are applied in this order, with later ones taking priority: built-in defaults, then a TOML file (`ucl-profiles.toml` in the current directory, or `--config` / `UCL_PROFILES_CONFIG`), then environment variables (`UCL_PROFILES_<KEY>`), then command-line options (`--<key-with-dashes>`). See [`ucl-profiles.example.toml`](ucl-profiles.example.toml) for every key. List values in the environment are separated by `;`, because tag names contain commas. On the command line, repeat `--area-tag` once per tag.
