@@ -1,0 +1,26 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# Exports contain staff email addresses (including dated copies)
+*.xlsx
+*.csv
+ucl-profiles*.json
+~$*
+
+# Local configuration
+ucl-profiles.toml
+
+# OS files
+.DS_Store
