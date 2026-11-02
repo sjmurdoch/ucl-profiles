@@ -16,7 +16,7 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
-from .api import DEFAULT_BASE_URL, MAX_PAGE_SIZE
+from .api import DEFAULT_BASE_URL, DEFAULT_RETRIES, DEFAULT_TIMEOUT, MAX_PAGE_SIZE
 
 ENV_PREFIX = "UCL_PROFILES_"
 DEFAULT_CONFIG_PATH = Path("ucl-profiles.toml")
@@ -76,6 +76,8 @@ class Settings:
     # Empty means ucl-profiles.<format>; "-" writes CSV or JSON to stdout.
     output: str = ""
     emails: bool = True
+    timeout: int = DEFAULT_TIMEOUT
+    retries: int = DEFAULT_RETRIES
     pgta_positions: list[str] = field(default_factory=lambda: list(DEFAULT_PGTA_POSITIONS))
     ps_positions: list[str] = field(default_factory=lambda: list(DEFAULT_PS_POSITIONS))
 
@@ -166,6 +168,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=s,
         help="look up each person's email address, one request each (default: on)",
     )
+    parser.add_argument("--timeout", type=int, default=s, metavar="SECONDS", help=f"give up on a request after this long (default: {DEFAULT_TIMEOUT})")
+    parser.add_argument("--retries", type=int, default=s, metavar="N", help=f"retry a timed-out or failed request up to N times (default: {DEFAULT_RETRIES})")
     for flag, column in (("pgta", "PGTA"), ("ps", "Professional services")):
         parser.add_argument(
             f"--{flag}-position",

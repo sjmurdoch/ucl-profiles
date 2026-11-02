@@ -29,6 +29,8 @@ max_pages = 0      # stop after this many pages of results, for testing; 0 means
 format = "xlsx"    # xlsx, csv or json
 output = ""        # file path; empty means ucl-profiles.<format>; - is stdout (csv/json only)
 emails = true      # look up each person's email (one request each)
+timeout = 10       # seconds before giving up on a request
+retries = 3        # retries after a timeout, connection error, 429 or 5xx
 
 # The "PGTA" and "Professional services" columns are Yes when every job
 # title matches one of the case-insensitive regular expressions below. Use

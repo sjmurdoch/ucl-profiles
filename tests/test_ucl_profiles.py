@@ -4,7 +4,7 @@ import pytest
 
 import urllib.error
 
-from ucl_profiles import add_profile_details, render
+from ucl_profiles import add_profile_details, api, render
 from ucl_profiles.api import iter_department_users, publication_count, search_body, user_email, user_tags
 from ucl_profiles.check import all_titles_match, check_users, has_any_tag, unknown_tags
 from ucl_profiles.config import DEFAULT_AREA_TAGS, DEFAULT_REQUIRED_TAG, DEFAULT_PGTA_POSITIONS, DEFAULT_PS_POSITIONS, ConfigError, Settings, load_settings
@@ -358,3 +358,58 @@ def test_empty_excel_export(tmp_path):
 
     write_xlsx(str(tmp_path / "e.xlsx"), [], DEPT, "R", ["X"], [], [])
     assert load_workbook(tmp_path / "e.xlsx")["Staff"].tables["Staff"].ref == "A1:K2"
+
+
+def test_with_retries_backs_off_exponentially_then_succeeds(capsys):
+    calls, sleeps = [], []
+
+    def flaky(url):
+        calls.append(url)
+        if len(calls) < 3:
+            raise urllib.error.URLError(TimeoutError("timed out"))
+        return {"ok": True}
+
+    got = api.with_retries(flaky, retries=3, backoff=1.0, sleep=sleeps.append)("https://x/api/users/1")
+    assert got == {"ok": True}
+    assert len(calls) == 3
+    # 1s then 2s, each with up to 50% jitter.
+    assert 1.0 <= sleeps[0] <= 1.5 and 2.0 <= sleeps[1] <= 3.0
+    assert "retrying https://x/api/users/1" in capsys.readouterr().err
+
+
+def test_with_retries_gives_up_after_limit():
+    sleeps = []
+
+    def always_times_out(url):
+        raise TimeoutError("timed out")
+
+    with pytest.raises(TimeoutError):
+        api.with_retries(always_times_out, retries=2, sleep=sleeps.append)("u")
+    assert len(sleeps) == 2
+
+
+def test_with_retries_does_not_retry_client_errors():
+    calls = []
+
+    def not_found(url):
+        calls.append(url)
+        raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+    with pytest.raises(urllib.error.HTTPError):
+        api.with_retries(not_found, retries=3, sleep=lambda s: None)("u")
+    assert len(calls) == 1
+
+
+def test_is_transient():
+    assert api.is_transient(urllib.error.HTTPError("u", 503, "x", None, None))
+    assert api.is_transient(urllib.error.HTTPError("u", 429, "x", None, None))
+    assert not api.is_transient(urllib.error.HTTPError("u", 404, "x", None, None))
+    assert api.is_transient(urllib.error.URLError("timed out"))
+    assert api.is_transient(TimeoutError())
+
+
+def test_timeout_and_retries_settings():
+    s = load_settings(["--timeout", "5", "--retries", "1"], env={})
+    assert (s.timeout, s.retries) == (5, 1)
+    s = load_settings([], env={"UCL_PROFILES_TIMEOUT": "20", "UCL_PROFILES_RETRIES": "0"})
+    assert (s.timeout, s.retries) == (20, 0)

@@ -9,18 +9,24 @@ requests are needed. The server caps ``perPage`` at 100.
 from __future__ import annotations
 
 import json
+import random
+import sys
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterator
 from typing import Any
 
 DEFAULT_BASE_URL = "https://profiles.ucl.ac.uk"
 MAX_PAGE_SIZE = 100
+DEFAULT_TIMEOUT = 10
+DEFAULT_RETRIES = 3
 
 # Takes (url, JSON body) and returns the decoded JSON response.
 Poster = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
-def http_post_json(url: str, body: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+def http_post_json(url: str, body: dict[str, Any], timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode(),
@@ -31,10 +37,49 @@ def http_post_json(url: str, body: dict[str, Any], timeout: float = 30.0) -> dic
         return json.load(response)
 
 
-def http_get_json(url: str, timeout: float = 30.0) -> dict[str, Any]:
+def http_get_json(url: str, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.load(response)
+
+
+def is_transient(error: BaseException) -> bool:
+    """Whether a failed request is worth retrying.
+
+    The Symplectic load balancer occasionally accepts a connection and then
+    never answers (a few percent of requests), which surfaces as a timeout;
+    a fresh connection almost always works. HTTP errors are retried only for
+    429 and 5xx, since a 404 won't change on a second try.
+    """
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or error.code >= 500
+    return isinstance(error, OSError)  # URLError, TimeoutError, ConnectionError
+
+
+def with_retries(
+    request: Callable[..., Any],
+    retries: int = DEFAULT_RETRIES,
+    backoff: float = 1.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Callable[..., Any]:
+    """Wrap a request function so transient failures are retried up to `retries` more times.
+
+    Waits grow exponentially (backoff, 2*backoff, 4*backoff, ...), each with up
+    to 50% random jitter added so retries don't fall into lockstep.
+    """
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        for attempt in range(retries + 1):
+            try:
+                return request(*args, **kwargs)
+            except OSError as e:
+                if attempt == retries or not is_transient(e):
+                    raise
+                print(f"note: retrying {args[0] if args else 'request'} after error: {e}", file=sys.stderr)
+                sleep(backoff * 2**attempt * (1 + random.random() / 2))
+        raise AssertionError("unreachable")
+
+    return wrapper
 
 
 def get_user(

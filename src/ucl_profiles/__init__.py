@@ -6,12 +6,20 @@ import csv
 import io
 import json
 import sys
-import urllib.error
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, replace
+from functools import partial
 from typing import Any
 
-from .api import current_appointment_titles, get_user, http_get_json, iter_department_users, user_email
+from .api import (
+    current_appointment_titles,
+    get_user,
+    http_get_json,
+    http_post_json,
+    iter_department_users,
+    user_email,
+    with_retries,
+)
 from .check import Result, all_titles_match, check_users, unknown_tags
 from .config import ConfigError, Settings, load_settings
 from .excel import COLUMNS, row, write_xlsx
@@ -35,7 +43,7 @@ def add_profile_details(
             continue
         try:
             profile = get_user(r.object_id, base_url, get)
-        except (urllib.error.URLError, ValueError) as e:
+        except (OSError, ValueError) as e:
             print(f"warning: could not fetch profile for {r.name}: {e}", file=sys.stderr)
             out.append(r)
             continue
@@ -62,8 +70,12 @@ def render(results: list[Result], fmt: str) -> str:
 
 
 def run(settings: Settings) -> int:
+    get = with_retries(partial(http_get_json, timeout=settings.timeout), settings.retries)
+    post = with_retries(partial(http_post_json, timeout=settings.timeout), settings.retries)
     users = list(
-        iter_department_users(settings.department, settings.base_url, settings.page_size, max_pages=settings.max_pages)
+        iter_department_users(
+            settings.department, settings.base_url, settings.page_size, post=post, max_pages=settings.max_pages
+        )
     )
     results = check_users(users, settings.required_tag, settings.area_tags, settings.department, settings.base_url)
 
@@ -71,7 +83,7 @@ def run(settings: Settings) -> int:
     for tag in unknown_tags([settings.required_tag, *settings.area_tags] if settings.required_tag else settings.area_tags, seen_tags):
         print(f"warning: no one in {settings.department!r} has the tag {tag!r} (typo?)", file=sys.stderr)
 
-    results = add_profile_details(results, settings.base_url, settings.emails)
+    results = add_profile_details(results, settings.base_url, settings.emails, get=get)
     results = [
         replace(
             r,
@@ -113,6 +125,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
-    except urllib.error.URLError as e:
+    except OSError as e:
         print(f"error: request to UCL Profiles failed: {e}", file=sys.stderr)
         return 1
