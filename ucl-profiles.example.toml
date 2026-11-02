@@ -1,0 +1,47 @@
+# Copy to ucl-profiles.toml (read automatically from the current directory)
+# or pass with --config. Every key can also be set as an environment
+# variable (UCL_PROFILES_<KEY>, lists separated by ";") or a command-line
+# option (--<key-with-dashes>).
+
+department = "Dept of Computer Science"
+
+# Everyone needs the required tag plus at least one area tag. Matching ignores case.
+required_tag = "Information and Computing Sciences"
+area_tags = [
+    "Applications in health",
+    "Artificial intelligence",
+    "Disability innovation",
+    "Computational economics and finance",
+    "Computational Logic and formal languages",
+    "Computer vision",
+    "Control engineering, mechatronics and robotics",
+    "Cybersecurity and privacy",
+    "Distributed computing and systems software",
+    "Graphics, augmented reality and games",
+    "Human-centred computing",
+    "Machine learning",
+    "Quantum computation",
+]
+
+base_url = "https://profiles.ucl.ac.uk"
+page_size = 100
+max_pages = 0      # stop after this many pages of results, for testing; 0 means all
+format = "xlsx"    # xlsx, csv or json
+output = ""        # file path; empty means ucl-profiles.<format>; - is stdout (csv/json only)
+emails = true      # look up each person's email (one request each)
+
+# The "PGTA" and "Professional services" columns are Yes when every job
+# title matches one of the case-insensitive regular expressions below. Use
+# single-quoted TOML strings so backslashes aren't escapes.
+pgta_positions = [
+    '\bPGTAs?\b',
+    '\bpost ?graduate teaching assistants?\b',
+]
+ps_positions = [
+    '\bmanager\b',
+    '\badministrat',
+    '\bofficer\b',
+    '\bco-?ordinator\b',
+    '^head of operations$',
+    '^strategic alliances director$',
+]
