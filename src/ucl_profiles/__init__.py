@@ -114,7 +114,11 @@ def run(settings: Settings) -> int:
 
     seen_tags = {t for r in results for t in r.tags}
     for tag in unknown_tags([settings.required_tag, *settings.area_tags] if settings.required_tag else settings.area_tags, seen_tags):
-        log.warning("no one in %r has the tag %r (typo?)", settings.department, tag)
+        if settings.max_pages:
+            # Only part of the department was fetched, so a missing tag proves nothing.
+            log.debug("no one in the first %d page(s) has the tag %r", settings.max_pages, tag)
+        else:
+            log.warning("no one in %r has the tag %r (typo?)", settings.department, tag)
 
     if settings.emails:
         log.info("fetching %d profiles for emails and appointment titles", len(results))

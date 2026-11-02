@@ -453,3 +453,12 @@ def test_main_reports_config_errors_via_logging(caplog, monkeypatch):
     assert ucl_profiles.main(["--format", "xlsx", "--output", "-"]) == 2
     assert any(r.levelname == "ERROR" and "stdout" in r.getMessage() for r in caplog.records)
 
+
+def test_tag_typo_warning_only_for_complete_runs(fake_site, caplog, tmp_path):
+    import ucl_profiles
+
+    ucl_profiles.run(Settings(format="csv", output=str(tmp_path / "a.csv"), area_tags=["No such tag", "Machine learning"]))
+    assert "has the tag 'No such tag' (typo?)" in caplog.text
+    caplog.clear()
+    ucl_profiles.run(Settings(format="csv", output=str(tmp_path / "b.csv"), area_tags=["No such tag"], max_pages=1))
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
